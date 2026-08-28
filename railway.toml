@@ -1,0 +1,10 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/check"
+healthcheckTimeout = 30
+
+[processes]
+web = "/start.sh"
