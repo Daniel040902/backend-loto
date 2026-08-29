@@ -53,7 +53,7 @@ class GuatemalaScraper implements LotteryScraper
                     continue;
                 }
 
-                $parsed = $this->parsePage($response->body());
+                $parsed = $this->parsePage($response->body(), $config['name']);
                 if (!$parsed) {
                     continue;
                 }
@@ -75,7 +75,7 @@ class GuatemalaScraper implements LotteryScraper
         return $results;
     }
 
-    protected function parsePage(string $html): ?array
+    protected function parsePage(string $html, ?string $gameName = null): ?array
     {
         if (!preg_match('/data-draw-numbers="([^"]+)"/', $html, $m)) {
             return null;
@@ -86,17 +86,25 @@ class GuatemalaScraper implements LotteryScraper
             return null;
         }
 
-        $numbers = [];
+        $twoDigit = in_array($gameName, ['Pega 2', 'Nap 2'], true);
+
+        $flat = [];
         foreach ($json as $group) {
             if (!is_array($group)) {
                 continue;
             }
             foreach ($group as $n) {
                 if (is_int($n) || is_numeric($n)) {
-                    $numbers[] = $this->normalizeNumber((string) $n);
+                    $flat[] = trim((string) $n);
                 }
             }
         }
+
+        if ($twoDigit) {
+            $flat = $this->groupPairs($flat);
+        }
+
+        $numbers = array_map(fn($n) => $this->normalizeNumber($n), $flat);
 
         if (empty($numbers)) {
             return null;
@@ -143,6 +151,28 @@ class GuatemalaScraper implements LotteryScraper
         }
 
         return null;
+    }
+
+    /**
+     * Agrupa dígitos sueltos (un carácter) de a dos para formar números de dos
+     * dígitos. Ej: ["3","6"] => ["36"]. Los números ya formados (dos o más
+     * caracteres) se mantienen tal cual, ej: ["23","50"] => ["23","50"].
+     */
+    protected function groupPairs(array $flat): array
+    {
+        $out = [];
+        $count = count($flat);
+        for ($i = 0; $i < $count; $i++) {
+            $cur = $flat[$i];
+            if (strlen($cur) === 1 && isset($flat[$i + 1]) && strlen($flat[$i + 1]) === 1) {
+                $out[] = $cur . $flat[$i + 1];
+                $i++;
+            } else {
+                $out[] = $cur;
+            }
+        }
+
+        return $out;
     }
 
     public function normalizeNumber(string $number): string
