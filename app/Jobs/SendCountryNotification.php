@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Country;
 use App\Models\LotteryResult;
+use App\Models\ManualResult;
 use App\Services\FirebaseService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -23,13 +24,20 @@ class SendCountryNotification implements ShouldQueue
     protected array $resultIds;
     protected ?string $title;
     protected ?string $body;
+    protected ?ManualResult $manual;
 
-    public function __construct(Country $country, array $resultIds = [], ?string $title = null, ?string $body = null)
-    {
+    public function __construct(
+        Country $country,
+        array $resultIds = [],
+        ?string $title = null,
+        ?string $body = null,
+        ?ManualResult $manual = null
+    ) {
         $this->country = $country;
         $this->resultIds = $resultIds;
         $this->title = $title;
         $this->body = $body;
+        $this->manual = $manual;
     }
 
     public function handle(FirebaseService $firebase): void
@@ -64,6 +72,15 @@ class SendCountryNotification implements ShouldQueue
             $data['draw_date'] = $result->draw_date instanceof \Illuminate\Support\Carbon
                 ? $result->draw_date->format('Y-m-d')
                 : (string) ($result->draw_date ?? '');
+        } elseif ($this->manual) {
+            $data['country_name'] = $this->country->name;
+            $data['country_flag'] = $this->country->flag ?? '';
+            $data['game'] = $this->manual->game->name ?? '';
+            $data['numbers'] = implode(',', $this->manual->winning_numbers ?? []);
+            $data['draw_time'] = $this->manual->draw_time ?? '';
+            $data['draw_date'] = $this->manual->draw_date instanceof \Illuminate\Support\Carbon
+                ? $this->manual->draw_date->format('Y-m-d')
+                : (string) ($this->manual->draw_date ?? '');
         }
 
         if ($this->title !== null) {

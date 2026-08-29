@@ -3,10 +3,13 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendCountryNotification;
 use App\Models\Country;
 use App\Models\Game;
 use App\Models\LotteryResult;
 use App\Models\ManualResult;
+use App\Services\ResultMergeService;
+use App\Support\DrawTime;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -65,6 +68,8 @@ class ResultController extends Controller
                     'source' => $data['source'] ?? 'manual',
                 ]
             );
+
+            $this->handleManualNotification($manual, $country);
 
             return response()->json([
                 'message' => $manual->wasRecentlyCreated ? 'Resultado manual creado' : 'Resultado manual actualizado',
@@ -147,9 +152,15 @@ class ResultController extends Controller
                 $query->limit(min((int) $request->limit, 100));
             }
 
-            $results = $query->get();
+            $officials = $query->get();
 
-            return response()->json($results);
+            $manuals = $this->manualQuery($request)
+                ->limit(min((int) $request->limit, 100) ?: 30)
+                ->get();
+
+            $merged = app(ResultMergeService::class)->merge($officials, $manuals);
+
+            return response()->json($merged);
         } catch (\Throwable $e) {
             Log::error('ResultController@index failed: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             return response()->json(['error' => 'Internal error', 'message' => $e->getMessage()], 500);
@@ -159,7 +170,7 @@ class ResultController extends Controller
     public function latest(): JsonResponse
     {
         try {
-            $results = LotteryResult::with(['country', 'game'])
+            $officials = LotteryResult::with(['country', 'game'])
                 ->whereNotNull('country_id')
                 ->whereNotNull('game_id')
                 ->whereHas('game', fn($q) => $q->where('active', true))
@@ -167,17 +178,28 @@ class ResultController extends Controller
                 ->orderBy('updated_at', 'desc')
                 ->limit(500)
                 ->get()
-                ->filter(fn($r) => $r->country && $r->game)
-                ->groupBy(fn($r) => $r->country->slug)
+                ->filter(fn($r) => $r->country && $r->game);
+
+            $manuals = ManualResult::with(['country', 'game'])
+                ->whereHas('game', fn($q) => $q->where('active', true))
+                ->orderBy('draw_date', 'desc')
+                ->orderBy('updated_at', 'desc')
+                ->limit(500)
+                ->get()
+                ->filter(fn($m) => $m->country && $m->game);
+
+            // Fusiona: el oficial manda; los manuales sin oficial se rellenan.
+            $merged = app(ResultMergeService::class)->merge($officials, $manuals)
+                ->groupBy(fn($r) => $r['country']['slug'] ?? '')
                 ->flatMap(function ($countryResults) {
                     return $countryResults
-                        ->groupBy(fn($r) => $r->game_id)
+                        ->groupBy(fn($r) => $r['game']['id'] ?? 0)
                         ->flatMap(fn($gameResults) => $gameResults->take(4));
                 })
                 ->sortByDesc('draw_date')
                 ->values();
 
-            return response()->json($results);
+            return response()->json($merged);
         } catch (\Throwable $e) {
             Log::error('ResultController@latest failed: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             return response()->json(['error' => 'Internal error', 'message' => $e->getMessage()], 500);
@@ -191,7 +213,7 @@ class ResultController extends Controller
 
             $today = Carbon::today($country->timezone);
 
-            $results = LotteryResult::with('game')
+            $officials = LotteryResult::with('game')
                 ->where('country_id', $country->id)
                 ->whereHas('game', fn($q) => $q->where('active', true))
                 ->whereDate('draw_date', '>=', $today->copy()->subDays(2))
@@ -199,10 +221,96 @@ class ResultController extends Controller
                 ->limit(30)
                 ->get();
 
-            return response()->json($results);
+            $manuals = ManualResult::with('game')
+                ->where('country_id', $country->id)
+                ->whereHas('game', fn($q) => $q->where('active', true))
+                ->whereDate('draw_date', '>=', $today->copy()->subDays(2))
+                ->orderBy('draw_date', 'desc')
+                ->limit(30)
+                ->get();
+
+            $merged = app(ResultMergeService::class)->merge($officials, $manuals);
+
+            return response()->json($merged);
         } catch (\Throwable $e) {
             Log::error("ResultController@byCountry({$countrySlug}) failed: " . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             return response()->json(['error' => 'Internal error', 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    protected function manualQuery(Request $request)
+    {
+        $query = ManualResult::with(['country', 'game'])
+            ->whereHas('game', fn($q) => $q->where('active', true))
+            ->orderBy('draw_date', 'desc');
+
+        if ($request->filled('country')) {
+            $query->whereHas('country', fn($q) => $q->where('slug', $request->country));
+        }
+
+        if ($request->filled('game')) {
+            $query->whereHas('game', fn($q) => $q->where('name', $request->game));
+        }
+
+        if ($request->filled('date')) {
+            $query->whereDate('draw_date', $request->date);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Gestiona la notificación FCM de un resultado manual publicado.
+     *
+     * CASO 1: no existe oficial para el sorteo -> FCM del manual UNA vez.
+     * CASO 2: existe oficial y coincide      -> no FCM (evita duplicado).
+     * CASO 3: existe oficial y difiere       -> el oficial manda; sin FCM extra
+     *         (la corrección se emite cuando el oficial llega por scraper).
+     */
+    protected function handleManualNotification(ManualResult $manual, Country $country): void
+    {
+        try {
+            $manual->loadMissing('game');
+
+            $official = LotteryResult::where('country_id', $manual->country_id)
+                ->where('game_id', $manual->game_id)
+                ->whereDate('draw_date', $manual->draw_date->format('Y-m-d'))
+                ->get()
+                ->first(
+                    fn($r) => DrawTime::normalize($r->draw_time) === DrawTime::normalize($manual->draw_time)
+                );
+
+            $manual->official_checked_at = now();
+
+            if (!$official) {
+                // CASO 1: sin oficial aún -> notificar el manual una sola vez.
+                $manual->winning_numbers = $manual->winning_numbers;
+                if (!$manual->isNotified()) {
+                    $manual->status = 'notified';
+                    $manual->notified_at = now();
+                    $manual->save();
+                    $manual->refresh();
+                    SendCountryNotification::dispatch($country, [], null, null, $manual);
+                    Log::info("FCM manual enviado: sorteo={$manual->sorteoKey()}");
+                } else {
+                    $manual->save();
+                }
+                return;
+            }
+
+            // Existe oficial para el sorteo.
+            if ($manual->winning_numbers === ($official->winning_numbers ?? [])) {
+                // CASO 2: coincide -> sin FCM; el oficial cubre el sorteo.
+                $manual->status = 'match';
+                $manual->save();
+                return;
+            }
+
+            // CASO 3: difiere -> el oficial manda; no se envía FCM del manual.
+            $manual->status = 'correction';
+            $manual->save();
+        } catch (\Throwable $e) {
+            Log::error('handleManualNotification failed: ' . $e->getMessage());
         }
     }
 }
