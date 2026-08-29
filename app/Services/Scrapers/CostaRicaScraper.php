@@ -141,7 +141,7 @@ class CostaRicaScraper implements LotteryScraper
                 if ($num === '') {
                     return;
                 }
-                $this->putResult($results, 'Nuevos Tiempos', $date, $drawTime, [$num], null, $drawNumber);
+                $this->putResult($results, 'Nuevos Tiempos', $date, $drawTime, [$num], $this->nuevosTiemposPrizes($rec), $drawNumber);
                 return;
 
             case 'Tres_Monazos':
@@ -223,6 +223,37 @@ class CostaRicaScraper implements LotteryScraper
             'draw_number' => $drawNumber,
             'date_iso' => $date,
         ];
+    }
+
+    /**
+     * Construye los prizes del sorteo Nuevos Tiempos con la info "reventado":
+     *  - "REVENTADO" => el "mega reventado" (meganNumero / MgRev)
+     *  - "BOLITA"    => color de bolita ("Roja" si in_reventado, si no "Blanca")
+     */
+    protected function nuevosTiemposPrizes(array $rec): ?array
+    {
+        $megan = (string) ($rec['meganNumero'] ?? '');
+        $inReventado = (int) ($rec['in_reventado'] ?? 0);
+        $color = strtoupper(trim((string) ($rec['colorBolita'] ?? '')));
+        if ($color === '') {
+            $color = $inReventado ? 'ROJA' : 'BLANCA';
+        }
+
+        $prizes = [];
+        if ($megan !== '') {
+            $prizes[] = [
+                'position' => 'REVENTADO',
+                'number' => $this->normalizeNumber($megan),
+                'amount' => (string) ($rec['porcentaje'] ?? ''),
+            ];
+        }
+        $prizes[] = [
+            'position' => 'BOLITA',
+            'number' => $color === 'ROJA' ? 'Roja' : 'Blanca',
+            'amount' => '',
+        ];
+
+        return $prizes;
     }
 
     protected function lottoPrizes($data): ?array
@@ -591,7 +622,7 @@ class CostaRicaScraper implements LotteryScraper
         }
 
         return match ($page) {
-            'nuevos-tiempos.php' => $this->parseFallbackDaily($html, $date, 'Nuevos Tiempos', false),
+            'nuevos-tiempos.php' => $this->parseFallbackNuevosTiempos($html, $date),
             '3-monazos.php' => $this->parseFallbackDaily($html, $date, 'Tres Monazos', true),
             'lotto.php' => $this->parseFallbackLotto($html, $date),
             'chances.php' => $this->parseFallbackSerie($html, $date, 'Chances'),
@@ -639,6 +670,70 @@ class CostaRicaScraper implements LotteryScraper
                 'winning_numbers' => $numbers,
                 'prizes' => null,
                 'draw_number' => $drawNumber,
+                'date_iso' => $date,
+            ];
+        }
+
+        return $results;
+    }
+
+    /**
+     * Fallback Nuevos Tiempos desde nacionalloteria.com (formato HTML con
+     * columnas: Nº, Rev., Bolita (roja/blanca) y MgRev).
+     */
+    protected function parseFallbackNuevosTiempos(string $html, string $date): array
+    {
+        $results = [];
+
+        if (!preg_match_all('/<tr>(.*?)<\/tr>/s', $html, $trMatches)) {
+            return [];
+        }
+
+        foreach ($trMatches[1] as $row) {
+            $label = '';
+            if (preg_match('/<span class="label label-normal[^"]*"[^>]*>\s*([^<]*?)\s*<\/span>/', $row, $lm)) {
+                $label = trim($lm[1]);
+            }
+
+            $drawTime = $this->fallbackTimeForLabel($label);
+            if ($drawTime === null) {
+                continue;
+            }
+
+            if (!preg_match_all('/<span class="label label-numero"[^>]*>\s*([^<]*?)\s*<\/span>/', $row, $nm)) {
+                continue;
+            }
+
+            $nums = array_map('trim', $nm[1]);
+            $nums = array_values(array_filter($nums, fn ($v) => $v !== ''));
+            if (empty($nums)) {
+                continue;
+            }
+
+            $numero = $this->normalizeNumber($nums[0] ?? '');
+            $megan = $this->normalizeNumber($nums[1] ?? '');
+            if ($numero === '') {
+                continue;
+            }
+
+            $prizes = [];
+            if ($megan !== '') {
+                $prizes[] = ['position' => 'REVENTADO', 'number' => $megan, 'amount' => ''];
+            }
+
+            $esRoja = str_contains($row, 'label-bolita-roja');
+            if ($esRoja || str_contains($row, 'label-bolita-blanca')) {
+                $prizes[] = ['position' => 'BOLITA', 'number' => $esRoja ? 'Roja' : 'Blanca', 'amount' => ''];
+            }
+
+            $key = 'Nuevos Tiempos|' . $date . '|' . $drawTime;
+            $results[$key] = [
+                'game_name' => 'Nuevos Tiempos',
+                'draw_date' => $date,
+                'draw_time' => $drawTime,
+                'winning_numbers' => [$numero],
+                'prizes' => $prizes ?: null,
+                'draw_number' => '',
                 'date_iso' => $date,
             ];
         }
