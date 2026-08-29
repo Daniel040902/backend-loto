@@ -21,6 +21,8 @@ class LotteryResult extends Model
         'winning_numbers',
         'prizes',
         'draw_number',
+        'reventado_numero',
+        'bolita_color',
         'date_iso',
         'source',
     ];

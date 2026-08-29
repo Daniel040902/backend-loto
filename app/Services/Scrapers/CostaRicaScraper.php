@@ -108,6 +108,8 @@ class CostaRicaScraper implements LotteryScraper
             'winning_numbers' => $rawData['winning_numbers'],
             'prizes' => $rawData['prizes'] ?? null,
             'draw_number' => $rawData['draw_number'] ?? null,
+            'reventado_numero' => $rawData['reventado_numero'] ?? null,
+            'bolita_color' => $rawData['bolita_color'] ?? null,
             'date_iso' => $rawData['date_iso'] ?? $rawData['draw_date'] ?? now()->toDateString(),
         ];
     }
@@ -141,7 +143,8 @@ class CostaRicaScraper implements LotteryScraper
                 if ($num === '') {
                     return;
                 }
-                $this->putResult($results, 'Nuevos Tiempos', $date, $drawTime, [$num], $this->nuevosTiemposPrizes($rec), $drawNumber);
+                [$reventadoNumero, $bolitaColor] = $this->reventadoFields($rec);
+                $this->putResult($results, 'Nuevos Tiempos', $date, $drawTime, [$num], $this->nuevosTiemposPrizes($rec), $drawNumber, $reventadoNumero, $bolitaColor);
                 return;
 
             case 'Tres_Monazos':
@@ -211,7 +214,7 @@ class CostaRicaScraper implements LotteryScraper
         $this->putResult($results, $gameName, $date, '7:30 PM', $numbers, $prizes, (string) ($rec['numeroSorteo'] ?? ''));
     }
 
-    protected function putResult(array &$results, string $gameName, string $date, string $drawTime, array $numbers, ?array $prizes, string $drawNumber): void
+    protected function putResult(array &$results, string $gameName, string $date, string $drawTime, array $numbers, ?array $prizes, string $drawNumber, ?string $reventadoNumero = null, ?string $bolitaColor = null): void
     {
         $key = $gameName . '|' . $date . '|' . $drawTime;
         $results[$key] = [
@@ -221,8 +224,27 @@ class CostaRicaScraper implements LotteryScraper
             'winning_numbers' => $numbers,
             'prizes' => $prizes,
             'draw_number' => $drawNumber,
+            'reventado_numero' => $reventadoNumero,
+            'bolita_color' => $bolitaColor,
             'date_iso' => $date,
         ];
+    }
+
+    /**
+     * Devuelve [numeroReventado, colorBolita] para el sorteo Nuevos Tiempos.
+     * Color: "R" (roja) si in_reventado, si no "B" (blanca).
+     */
+    protected function reventadoFields(array $rec): array
+    {
+        $megan = $this->normalizeNumber((string) ($rec['meganNumero'] ?? ''));
+        $inReventado = (int) ($rec['in_reventado'] ?? 0);
+        $colorRaw = strtoupper(trim((string) ($rec['colorBolita'] ?? '')));
+        if ($colorRaw === '') {
+            $colorRaw = $inReventado ? 'ROJA' : 'BLANCA';
+        }
+        $bolitaColor = $colorRaw === 'ROJA' ? 'R' : 'B';
+
+        return [$megan, $bolitaColor];
     }
 
     /**
@@ -734,6 +756,8 @@ class CostaRicaScraper implements LotteryScraper
                 'winning_numbers' => [$numero],
                 'prizes' => $prizes ?: null,
                 'draw_number' => '',
+                'reventado_numero' => $megan !== '' ? $megan : null,
+                'bolita_color' => ($esRoja || str_contains($row, 'label-bolita-blanca')) ? ($esRoja ? 'R' : 'B') : null,
                 'date_iso' => $date,
             ];
         }

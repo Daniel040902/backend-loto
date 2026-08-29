@@ -85,6 +85,8 @@ class ScrapingService
                     'winning_numbers' => $parsed['winning_numbers'],
                     'prizes' => $parsed['prizes'] ?? null,
                     'draw_number' => $parsed['draw_number'] ?? null,
+                    'reventado_numero' => $parsed['reventado_numero'] ?? null,
+                    'bolita_color' => $parsed['bolita_color'] ?? null,
                     'date_iso' => $parsed['date_iso'] ?? $parsed['draw_date'],
                     'source' => 'api',
                 ]
