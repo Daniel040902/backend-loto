@@ -194,9 +194,12 @@ class ResultController extends Controller
                 ->flatMap(function ($countryResults) {
                     return $countryResults
                         ->groupBy(fn($r) => $r['game']['id'] ?? 0)
-                        ->flatMap(fn($gameResults) => $gameResults->take(4));
+                        ->flatMap(fn($gameResults) => $gameResults
+                            ->sortByDesc(fn($r) => $this->sortDraw($r))
+                            ->values()
+                            ->take(4));
                 })
-                ->sortByDesc('draw_date')
+                ->sortByDesc(fn($r) => $this->sortDraw($r))
                 ->values();
 
             return response()->json($merged);
@@ -204,6 +207,26 @@ class ResultController extends Controller
             Log::error('ResultController@latest failed: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             return response()->json(['error' => 'Internal error', 'message' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Clave de ordenación por fecha + hora normalizada a minutos,
+     * para que el corte "4 últimos por juego" conserve el resultado más reciente
+     * aunque venga de la tabla de manuales (agregados después del merge).
+     */
+    protected function sortDraw(array $row): string
+    {
+        $minutes = DrawTime::normalize($row['draw_time'] ?? null) ? $this->drawTimeMinutes($row['draw_time']) : 0;
+        return ($row['draw_date'] ?? '') . 'T' . str_pad((string) $minutes, 4, '0', STR_PAD_LEFT);
+    }
+
+    protected function drawTimeMinutes(?string $time): int
+    {
+        if (!$time) return 0;
+        if (!preg_match('/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i', trim($time), $m)) return 0;
+        $h = ((int) $m[1]) % 12;
+        if (strtoupper($m[3]) === 'PM') $h += 12;
+        return $h * 60 + (int) $m[2];
     }
 
     public function byCountry(string $countrySlug): JsonResponse
