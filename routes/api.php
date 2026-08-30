@@ -9,6 +9,7 @@ Route::prefix('auth')->group(function () {
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('logout', [App\Http\Controllers\Api\AuthController::class, 'logout']);
         Route::get('me', [App\Http\Controllers\Api\AuthController::class, 'me']);
+        Route::post('change-password', [App\Http\Controllers\Api\AuthController::class, 'changePassword']);
     });
 });
 

@@ -40,15 +40,21 @@ class AuthController extends Controller
     public function login(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'email' => 'required|string|email',
+            'username' => 'nullable|string|max:255',
+            'email' => 'nullable|string|email',
             'password' => 'required|string',
         ]);
 
-        $user = User::where('email', $validated['email'])->first();
+        $user = null;
+        if (!empty($validated['username'])) {
+            $user = User::where('username', $validated['username'])->first();
+        } elseif (!empty($validated['email'])) {
+            $user = User::where('email', $validated['email'])->first();
+        }
 
         if (!$user || !Hash::check($validated['password'], $user->password)) {
             throw ValidationException::withMessages([
-                'email' => ['Las credenciales son incorrectas.'],
+                'username' => ['Las credenciales son incorrectas.'],
             ]);
         }
 
@@ -62,6 +68,25 @@ class AuthController extends Controller
             'user' => $user,
             'token' => $token,
         ]);
+    }
+
+    public function changePassword(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'current_password' => 'required|string',
+            'new_password' => 'required|string|min:4',
+        ]);
+
+        $user = $request->user();
+
+        if (!Hash::check($validated['current_password'], $user->password)) {
+            return response()->json(['error' => 'La contraseña actual es incorrecta.'], 422);
+        }
+
+        $user->password = Hash::make($validated['new_password']);
+        $user->save();
+
+        return response()->json(['message' => 'Contraseña actualizada correctamente.']);
     }
 
     public function logout(Request $request): JsonResponse
