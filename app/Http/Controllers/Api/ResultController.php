@@ -285,10 +285,13 @@ class ResultController extends Controller
     /**
      * Gestiona la notificación FCM de un resultado manual publicado.
      *
-     * CASO 1: no existe oficial para el sorteo -> FCM del manual UNA vez.
-     * CASO 2: existe oficial y coincide      -> no FCM (evita duplicado).
-     * CASO 3: existe oficial y difiere       -> el oficial manda; sin FCM extra
-     *         (la corrección se emite cuando el oficial llega por scraper).
+     * Reglas:
+     *  - Si existe oficial y coincide con el manual  -> NO se notifica (sin duplicados).
+     *  - Si NO existe oficial (o el manual difiere del oficial/lo notificado)
+     *    -> se notifican los números actuales, UNA vez por valor:
+     *       * primera vez: notificación normal.
+     *       * si luego corriges con otros números: notificación de corrección.
+     *       * si repites los mismos números ya notificados: se ignora (sin duplicado).
      */
     protected function handleManualNotification(ManualResult $manual, Country $country): void
     {
@@ -305,42 +308,38 @@ class ResultController extends Controller
 
             $manual->official_checked_at = now();
 
-            if (!$official) {
-                // CASO 1: sin oficial aún -> notificar el manual una sola vez.
-                // El FCM se despacha ANTES de persistir la marca de notificado,
-                // para que un esquema viejo (migración de notificación pendiente)
-                // jamás bloquee silenciosamente el envío.
-                $alreadyNotified = $manual->isNotified();
-                if (!$alreadyNotified) {
-                    SendCountryNotification::dispatch($country, [], null, null, $manual);
-                    Log::info("FCM manual enviado: sorteo={$manual->sorteoKey()}");
-                }
+            $numbers = (array) ($manual->winning_numbers ?? []);
 
-                try {
-                    if (!$alreadyNotified) {
-                        $manual->status = 'notified';
-                        $manual->notified_at = now();
-                    }
-                    $manual->save();
-                } catch (\Throwable $e) {
-                    Log::info("handleManualNotification: FCM " . ($alreadyNotified ? '(duplicado evitado)' : 'enviado') . ", no pude marcar notified: {$e->getMessage()}");
-                }
+            // Si existe oficial y coincide con el manual, el oficial ya cubre el sorteo:
+            // no enviamos nada para no duplicar.
+            if ($official && ($official->winning_numbers ?? []) === $numbers) {
+                $manual->status = 'match';
+                $manual->save();
+                Log::info("FCM manual: coincide con oficial, sin envío (sorteo={$manual->sorteoKey()})");
                 return;
             }
 
-            // Existe oficial para el sorteo.
-            if ($manual->winning_numbers === ($official->winning_numbers ?? [])) {
-                // CASO 2: coincide -> sin FCM; el oficial cubre el sorteo.
-                $manual->status = 'match';
-            } else {
-                // CASO 3: difiere -> el oficial manda; no se envía FCM del manual.
-                $manual->status = 'correction';
+            // Si el oficial existe pero difiere, el manual es una corrección provisional:
+            // se notifica el manual (es lo que el usuario publicó en ese momento).
+            // Si no hay oficial, es un resultado provisional: también se notifica.
+
+            // Evita duplicar: si ya notificamos exactamente estos números, no reenviamos.
+            if ($manual->alreadyNotifiedWith($numbers)) {
+                Log::info("FCM manual: ya notificados estos números, sin reenvío (sorteo={$manual->sorteoKey()})");
+                $manual->status = 'notified';
+                $manual->save();
+                return;
             }
+
+            SendCountryNotification::dispatch($country, [], null, null, $manual);
+            Log::info("FCM manual enviado: sorteo={$manual->sorteoKey()} números=" . implode(',', $numbers));
+
+            $manual->markNotifiedWith($numbers);
 
             try {
                 $manual->save();
             } catch (\Throwable $e) {
-                Log::info("handleManualNotification: no pude guardar status ({$manual->status}): {$e->getMessage()}");
+                Log::info("handleManualNotification: no pude guardar notified: {$e->getMessage()}");
             }
         } catch (\Throwable $e) {
             Log::error('handleManualNotification failed: ' . $e->getMessage());
