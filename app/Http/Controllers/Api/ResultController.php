@@ -307,16 +307,23 @@ class ResultController extends Controller
 
             if (!$official) {
                 // CASO 1: sin oficial aún -> notificar el manual una sola vez.
-                $manual->winning_numbers = $manual->winning_numbers;
-                if (!$manual->isNotified()) {
-                    $manual->status = 'notified';
-                    $manual->notified_at = now();
-                    $manual->save();
-                    $manual->refresh();
+                // El FCM se despacha ANTES de persistir la marca de notificado,
+                // para que un esquema viejo (migración de notificación pendiente)
+                // jamás bloquee silenciosamente el envío.
+                $alreadyNotified = $manual->isNotified();
+                if (!$alreadyNotified) {
                     SendCountryNotification::dispatch($country, [], null, null, $manual);
                     Log::info("FCM manual enviado: sorteo={$manual->sorteoKey()}");
-                } else {
+                }
+
+                try {
+                    if (!$alreadyNotified) {
+                        $manual->status = 'notified';
+                        $manual->notified_at = now();
+                    }
                     $manual->save();
+                } catch (\Throwable $e) {
+                    Log::info("handleManualNotification: FCM " . ($alreadyNotified ? '(duplicado evitado)' : 'enviado') . ", no pude marcar notified: {$e->getMessage()}");
                 }
                 return;
             }
@@ -325,13 +332,16 @@ class ResultController extends Controller
             if ($manual->winning_numbers === ($official->winning_numbers ?? [])) {
                 // CASO 2: coincide -> sin FCM; el oficial cubre el sorteo.
                 $manual->status = 'match';
-                $manual->save();
-                return;
+            } else {
+                // CASO 3: difiere -> el oficial manda; no se envía FCM del manual.
+                $manual->status = 'correction';
             }
 
-            // CASO 3: difiere -> el oficial manda; no se envía FCM del manual.
-            $manual->status = 'correction';
-            $manual->save();
+            try {
+                $manual->save();
+            } catch (\Throwable $e) {
+                Log::info("handleManualNotification: no pude guardar status ({$manual->status}): {$e->getMessage()}");
+            }
         } catch (\Throwable $e) {
             Log::error('handleManualNotification failed: ' . $e->getMessage());
         }
