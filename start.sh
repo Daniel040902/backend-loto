@@ -12,13 +12,22 @@ envsubst '${PORT}' < "${NGINX_CONF_DIR}/default.conf.template" > "${NGINX_CONF_D
 # Permisos de storage para que php-fpm (www-data) y los procesos CLI puedan escribir logs
 chmod -R 777 /var/www/storage 2>/dev/null || true
 
-# FCM: materializa las credenciales del service account desde la variable de Railway
+# FCM: materializa las credenciales del service account.
+# 1) Si está definida la variable FIREBASE_CREDENTIALS_JSON, la escribe directamente.
+# 2) Si no, copia el archivo firebase-credentials.json desde la raíz del proyecto
+#    (caso VPS: el Dockerfile hace COPY . ., y suele estar en /var/www/firebase-credentials.json).
+mkdir -p /var/www/storage/app
 if [ -n "$FIREBASE_CREDENTIALS_JSON" ]; then
-    mkdir -p /var/www/storage/app
+    echo "FCM: FIREBASE_CREDENTIALS_JSON definida"
     echo "$FIREBASE_CREDENTIALS_JSON" > /var/www/storage/app/firebase-credentials.json
     echo "FCM: firebase-credentials.json creado desde FIREBASE_CREDENTIALS_JSON ($(wc -c < /var/www/storage/app/firebase-credentials.json) bytes)"
+elif [ -f /var/www/firebase-credentials.json ]; then
+    cp /var/www/firebase-credentials.json /var/www/storage/app/firebase-credentials.json
+    echo "FCM: firebase-credentials.json copiado desde raíz ($(wc -c < /var/www/storage/app/firebase-credentials.json) bytes)"
+elif [ -f /var/www/storage/app/firebase-credentials.json ]; then
+    echo "FCM: firebase-credentials.json ya existe en storage/app ($(wc -c < /var/www/storage/app/firebase-credentials.json) bytes)"
 else
-    echo "FCM: FIREBASE_CREDENTIALS_JSON no definida"
+    echo "FCM: no se encontraron credenciales (FIREBASE_CREDENTIALS_JSON vacía y sin archivo firebase-credentials.json)"
 fi
 
 php-fpm -D
