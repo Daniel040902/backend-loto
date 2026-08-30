@@ -143,6 +143,9 @@ class FirebaseService
 
         $title = $data['title'] ?? ($data['game'] ?? 'LOTO');
         $body = $data['body'] ?? ($data['numbers'] ?? '');
+        $channelId = isset($data['channel_id']) && $data['channel_id'] !== ''
+            ? $data['channel_id']
+            : 'loto_results_channel';
 
         $payload = [
             'message' => [
@@ -153,6 +156,16 @@ class FirebaseService
                 ]),
                 'android' => [
                     'priority' => 'high',
+                    // Notificación manejada por el sistema: garantiza que aparezca
+                    // aunque la app esté en segundo plano o su proceso haya sido
+                    // terminado. El bloque `data` adicional lo recibe
+                    // onMessageReceived en primer plano para mostrar el arte custom.
+                    'notification' => [
+                        'title' => $title,
+                        'body' => $body,
+                        'channel_id' => $channelId,
+                        'click_action' => 'OPEN_RESULTS',
+                    ],
                 ],
             ],
         ];
@@ -193,9 +206,21 @@ class FirebaseService
             return self::STATUS_NOT_CONFIGURED;
         }
 
+        $title = $data['title'] ?? ($data['game'] ?? 'LOTO');
+        $body = $data['body'] ?? ($data['numbers'] ?? '');
+        $channelId = isset($data['channel_id']) && $data['channel_id'] !== ''
+            ? $data['channel_id']
+            : 'loto_results_channel';
+
         $payload = [
             'to' => '/topics/' . $topic,
             'data' => array_merge($data, ['click_action' => 'OPEN_RESULTS']),
+            'notification' => [
+                'title' => $title,
+                'body' => $body,
+                'click_action' => 'OPEN_RESULTS',
+                'android_channel_id' => $channelId,
+            ],
             'priority' => 'high',
         ];
 
