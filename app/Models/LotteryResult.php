@@ -11,6 +11,13 @@ use Illuminate\Support\Facades\Log;
 
 class LotteryResult extends Model
 {
+    /**
+     * Cuando es true, el evento "created" NO dispara la notificación FCM.
+     * Lo usa el backfill histórico (lottery:backfill) para rellenar días
+     * pasados sin enviar notificaciones a los usuarios.
+     */
+    public static bool $suppressCreatedNotification = false;
+
     protected $table = 'lottery_results';
 
     protected $fillable = [
@@ -39,6 +46,10 @@ class LotteryResult extends Model
     protected static function booted(): void
     {
         static::created(function (LotteryResult $result) {
+            if (self::$suppressCreatedNotification) {
+                return;
+            }
+
             if (empty($result->winning_numbers) || !$result->country_id) {
                 return;
             }
