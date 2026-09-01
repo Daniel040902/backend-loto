@@ -44,6 +44,9 @@ class GameSeeder extends Seeder
             ],
             'republica-dominicana' => [
                 ['name' => 'La Primera', 'type' => 'three_digit', 'draw_times' => ['12:00 PM', '8:00 PM'], 'sort_order' => 1],
+                ['name' => 'Quinielón Día', 'type' => 'two_digit', 'draw_times' => ['12:00 PM'], 'sort_order' => 2],
+                ['name' => 'Quinielón Noche', 'type' => 'two_digit', 'draw_times' => ['8:00 PM'], 'sort_order' => 3],
+                ['name' => 'Loto 5', 'type' => 'five_number', 'draw_times' => ['8:00 PM'], 'sort_order' => 4],
             ],
             'belice' => [
                 ['name' => 'Boledo', 'type' => 'two_digit', 'draw_times' => ['9:00 PM'], 'sort_order' => 1],

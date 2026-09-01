@@ -10,14 +10,12 @@ class DominicanRepublicScraper implements LotteryScraper
 {
     protected string $baseUrl = 'https://www.loteriasdominicanas.us';
 
-    protected array $drawTimeMap = [
-        'mediodia' => '12:00 PM',
-        'noche' => '8:00 PM',
-    ];
-
-    protected array $gameNameMap = [
-        'mediodia' => 'La Primera Mediodia',
-        'noche' => 'La Primera Noche',
+    protected array $pageConfigs = [
+        ['url' => '/la-primera/quiniela/dia/', 'slug' => 'mediodia', 'draw_time' => '12:00 PM', 'game_name' => 'La Primera'],
+        ['url' => '/la-primera/quiniela/noche/', 'slug' => 'noche', 'draw_time' => '8:00 PM', 'game_name' => 'La Primera'],
+        ['url' => '/la-primera/quinielon/dia/', 'slug' => 'quinielon-dia', 'draw_time' => '12:00 PM', 'game_name' => 'Quinielón Día'],
+        ['url' => '/la-primera/quinielon/noche/', 'slug' => 'quinielon-noche', 'draw_time' => '8:00 PM', 'game_name' => 'Quinielón Noche'],
+        ['url' => '/la-primera/loto-5/', 'slug' => 'loto-5', 'draw_time' => '8:00 PM', 'game_name' => 'Loto 5'],
     ];
 
     protected array $spanishMonths = [
@@ -54,45 +52,40 @@ class DominicanRepublicScraper implements LotteryScraper
     {
         $results = [];
 
-        try {
-            $response = Http::timeout(15)
-                ->withHeaders([
-                    'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                ])
-                ->get($this->baseUrl . '/', ['d' => $date->format('Y-m-d')]);
+        foreach ($this->pageConfigs as $config) {
+            try {
+                $response = Http::timeout(15)
+                    ->withHeaders([
+                        'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    ])
+                    ->get($this->baseUrl . $config['url'], ['d' => $date->format('Y-m-d')]);
 
-            if (!$response->successful()) {
-                Log::warning("LOTO DO HTTP {$response->status()} for {$date->format('Y-m-d')}");
-                return [];
-            }
+                if (!$response->successful()) {
+                    Log::warning("LOTO DO HTTP {$response->status()} for {$config['game_name']}");
+                    continue;
+                }
 
-            $html = $response->body();
-
-            preg_match_all(
-                '/<div class="card la-primera-([a-z]+)[^"]*".*?<ul class="balls">(.*?)<\/ul>/s',
-                $html,
-                $matches,
-                PREG_SET_ORDER
-            );
-
-            foreach ($matches as $match) {
-                $sorteoSlug = $match[1];
-                $parsed = $this->parseCard($sorteoSlug, $match[2], $date, $html);
+                $html = $response->body();
+                $parsed = $this->parseCard($config, $html, $date);
                 if ($parsed) {
                     $results[] = $parsed;
                 }
+            } catch (\Throwable $e) {
+                Log::warning("LOTO DO failed for {$config['game_name']}: " . $e->getMessage());
             }
-        } catch (\Throwable $e) {
-            Log::warning("LOTO DO failed: " . $e->getMessage());
         }
 
         return $results;
     }
 
-    protected function parseCard(string $sorteoSlug, string $ballsHtml, \DateTime $date, string $fullHtml): ?array
+    protected function parseCard(array $config, string $html, \DateTime $date): ?array
     {
-        if (!preg_match_all('/<li[^>]*>\s*(\d{1,3})\s*<\/li>/', $ballsHtml, $balls)) {
+        if (!preg_match('/<div class="card[^"]*"[^>]*>.*?<ul class="balls">(.*?)<\/ul>/s', $html, $ballsMatch)) {
+            return null;
+        }
+
+        if (!preg_match_all('/<li[^>]*>\s*(\d{1,3})\s*<\/li>/', $ballsMatch[1], $balls)) {
             return null;
         }
 
@@ -105,13 +98,8 @@ class DominicanRepublicScraper implements LotteryScraper
             return null;
         }
 
-        $drawTime = $this->drawTimeMap[$sorteoSlug] ?? null;
-        if (!$drawTime) {
-            return null;
-        }
-
         $drawDate = $date->format('Y-m-d');
-        if (preg_match('/class="card la-primera-' . $sorteoSlug . '[^"]*".*?<div class="draw-date">([^<]+)<\/div>/s', $fullHtml, $d)) {
+        if (preg_match('/<div class="draw-date">([^<]+)<\/div>/s', $html, $d)) {
             $parsedDate = $this->parseSpanishDate(trim($d[1]));
             if ($parsedDate) {
                 $drawDate = $parsedDate;
@@ -124,15 +112,15 @@ class DominicanRepublicScraper implements LotteryScraper
                 0 => 'Primer Premio',
                 1 => 'Segundo Premio',
                 2 => 'Tercer Premio',
-                default => 'Premio ' . ($i + 1),
+                default => 'Número ' . ($i + 1),
             };
             $prizes[] = ['position' => $position, 'number' => $number];
         }
 
         return [
-            'game_name' => $this->gameNameMap[$sorteoSlug] ?? 'La Primera',
+            'game_name' => $config['game_name'],
             'draw_date' => $drawDate,
-            'draw_time' => $drawTime,
+            'draw_time' => $config['draw_time'],
             'winning_numbers' => $winningNumbers,
             'prizes' => $prizes,
             'draw_number' => null,
