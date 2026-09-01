@@ -108,12 +108,14 @@ class DominicanRepublicScraper implements LotteryScraper
 
         $prizes = [];
         foreach ($winningNumbers as $i => $number) {
-            $position = match ($i) {
-                0 => 'Primer Premio',
-                1 => 'Segundo Premio',
-                2 => 'Tercer Premio',
-                default => 'Número ' . ($i + 1),
-            };
+            $position = count($winningNumbers) > 3
+                ? 'Número ' . ($i + 1)
+                : match ($i) {
+                    0 => 'Primer Premio',
+                    1 => 'Segundo Premio',
+                    2 => 'Tercer Premio',
+                    default => 'Número ' . ($i + 1),
+                };
             $prizes[] = ['position' => $position, 'number' => $number];
         }
 
